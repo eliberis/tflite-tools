@@ -12,6 +12,9 @@ Additionally, the tool can:
 * Simulate code-book quantization by clustering the weights into `n` centroids, and replacing each weight with the 
 closest centroid value. Node that this is done for each weight matrix separately and biases are left untouched.
 
+The tool also offers an API through the `TFLiteModel` class --- see `def main()` in `tflite_tools.py` for example 
+usage.
+
 ## Setup
 The tool requires Python 3.6+ and a few dependencies, as described in `Pipfile`.
 To create a new virtual environment with correct dependencies, run the following the root of the repository:
