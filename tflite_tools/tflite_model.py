@@ -352,8 +352,8 @@ class TFLiteModel:
         other_sizes = np.array(other_sizes) / 1024
         peak_mem_use /= 1024
 
-        fig = plt.figure(figsize=(len(labels) / 3.5, 8))
-        plt.tight_layout()
+        fig = plt.figure(figsize=(max(len(labels) / 3.5, 6), 8))
+        fig.tight_layout()
         ax = fig.gca()
         x = np.arange(0, len(labels))
 
