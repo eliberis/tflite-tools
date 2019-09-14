@@ -1,4 +1,5 @@
 import argparse
+import os
 
 from tflite_tools import TFLiteModel
 
@@ -11,6 +12,8 @@ def main():
     parser.add_argument("--clusters", type=int, default=0,
                         help="cluster weights into n-many values (simulate code-book quantization)")
     parser.add_argument("--optimize", action="store_true", default=False, help="optimize peak working set size")
+    parser.add_argument("--csv", type=str, dest="csv_output_folder", default=None,
+                        help="output model analysis in CSV format into the specified folder")
     args = parser.parse_args()
 
     # Example API usage:
@@ -22,7 +25,11 @@ def main():
         print("Optimizing peak memory usage...")
         model.optimize_memory()
 
-    model.print_model_analysis()
+    if args.csv_output_folder:
+        os.makedirs(args.csv_output_folder, exist_ok=True)
+        model.output_model_analysis_to_csv(args.csv_output_folder)
+    else:
+        model.print_model_analysis()
 
     if args.clusters > 0:
         model.cluster_weights(args.clusters)

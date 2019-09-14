@@ -1,13 +1,15 @@
 import sys
-import numpy as np
+import csv
 from collections import namedtuple
 import functools
+from pathlib import Path
 
 from .tflite import Model
 from .tflite.BuiltinOperator import BuiltinOperator
 from .tflite.TensorType import TensorType
 from flatbuffers.number_types import UOffsetTFlags
 import tensorflow.lite as tf_lite
+import numpy as np
 from tqdm import tqdm
 from prettytable import PrettyTable
 
@@ -207,13 +209,13 @@ class TFLiteModel:
             # Computes the peak memory usage of a runtime system that computes all tensors in a set `tensors`.
             constants = [t for t in tensors if t.producer is None]
             if constants:
-                upstream_mem_use, schedule = mem(frozenset(t for t in tensors if t.producer is not None))
-                return TFLiteModel._cum_tensor_sizes(constants) + upstream_mem_use, schedule
+                upstream_mem_use, op_order = mem(frozenset(t for t in tensors if t.producer is not None))
+                return TFLiteModel._cum_tensor_sizes(constants) + upstream_mem_use, op_order
             if not tensors:
                 return 0, []
 
             min_use = sys.maxsize  # A reasonably large integer
-            schedule = []
+            op_order = []
             # For each of tensors in our working set, we try to unapply the operator that produced it
             for t in tensors:
                 rest = tensors - {t}
@@ -230,8 +232,8 @@ class TFLiteModel:
                 mem_use = max(upstream_mem_use, TFLiteModel._cum_tensor_sizes(tensors_in_memory))
                 if mem_use < min_use:
                     min_use = mem_use
-                    schedule = operators + [t.producer]
-            return min_use, schedule
+                    op_order = operators + [t.producer]
+            return min_use, op_order
 
         self.peak_usage = mem(frozenset(g.outputs))
         return self.peak_usage
@@ -254,7 +256,7 @@ class TFLiteModel:
                 correct += 1
         print(f"{correct} classified correctly out of {len(test_data)} ({correct / len(test_data) * 100:.2f}%)")
 
-    def _print_execution_schedule(self):
+    def _execution_schedule_info(self):
         if not self.model_graph:
             self._build_graph()
         g = self.model_graph
@@ -264,21 +266,40 @@ class TFLiteModel:
         first_used_at = {t: t.producer.id if t.producer is not None else 0 for t in g.tensors}
         last_used_at = {t: max(op.id for op in t.consumers) if t.consumers else num_operators for t in g.tensors}
 
+        schedule = []
+        for op in g.operators:
+            tensors = {t for t in g.tensors if first_used_at[t] <= op.id <= last_used_at[t]}
+            mem_use = TFLiteModel._cum_tensor_sizes(tensors)
+            schedule.append((op, tensors, mem_use))
+
+        return schedule
+
+    def _print_execution_schedule(self):
         x = PrettyTable()
         x.field_names = ["Operator (output name)", "Tensors in memory (IDs)", "Memory use (B)"]
         x.align["Memory use (B)"] = "r"
 
+        schedule = self._execution_schedule_info()
         peak_mem_use = 0
-        print("Operator execution schedule:")
-        for op in g.operators:
-            tensors = {t for t in g.tensors if first_used_at[t] <= op.id <= last_used_at[t]}
-            mem_use = TFLiteModel._cum_tensor_sizes(tensors)
-            peak_mem_use = max(mem_use, peak_mem_use)
-            x.add_row([op.output.name, f"[{', '.join(str(t.id) for t in tensors if t.size != 0)}]", f"{mem_use:,}"])
+        for item in schedule:
+            op, working_set, mem_use = item
+            peak_mem_use = max(peak_mem_use, mem_use)
+            x.add_row([op.output.name, f"[{', '.join(str(t.id) for t in working_set if t.size != 0)}]", f"{mem_use:,}"])
 
+        print("Operator execution schedule:")
         print(x)
         print(f"Current peak memory usage: {peak_mem_use:,} B")
         print()
+
+    def _output_execution_schedule_to_csv(self, csv_file):
+        with open(csv_file, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(["Operator", "Working set", "Memory use"])
+
+            schedule = self._execution_schedule_info()
+            for item in schedule:
+                op, working_set, mem_use = item
+                w.writerow([op.output.name, ' '.join(str(t.id) for t in working_set if t.size != 0), mem_use])
 
     def _print_tensor_details(self):
         if not self.model_graph:
@@ -297,16 +318,34 @@ class TFLiteModel:
         print(x)
         print()
 
+    def _output_tensor_details_to_csv(self, csv_file):
+        if not self.model_graph:
+            self._build_graph()
+
+        with open(csv_file, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(["Id", "Name", "Shape", "Size"])
+
+            for t in self.model_graph.tensors:
+                if t.size != 0:
+                    w.writerow([t.id, t.name, ' '.join(str(i) for i in t.shape), t.size])
+
     def print_model_analysis(self):
         self._print_tensor_details()
         self._print_execution_schedule()
 
+    def output_model_analysis_to_csv(self, output_folder):
+        output_folder = Path(output_folder)
+        assert output_folder.is_dir()
+        self._output_tensor_details_to_csv(output_folder / "tensor_details.csv")
+        self._output_execution_schedule_to_csv(output_folder / "execution_schedule_info.csv")
+
     def optimize_memory(self):
-        _, schedule = self.peak_mem_usage()
+        _, op_order = self.peak_mem_usage()
         num_operators = len(self.model_graph.operators)
-        correctly_ordered = all(i == schedule[i].id for i in range(num_operators))
+        correctly_ordered = all(i == op_order[i].id for i in range(num_operators))
         if correctly_ordered:
-            print("The model already has optimal operator arrangement.")
+            print("The model already has optimal operator order.")
             return
 
         # Proceed reordering the operators by changing the indirection table
@@ -318,9 +357,9 @@ class TFLiteModel:
 
         for i in range(num_operators):
             # Operator #op_id should go into position i
-            op_id = schedule[i].id
+            op_id = op_order[i].id
             indirection_table[i] = old_indirection_table[op_id] + 4 * (op_id - i)
-            schedule[i].id = i
+            op_order[i].id = i
 
         # Patch up model_graph instead of rebuilding it
         self.model_graph.operators.sort(key=lambda op: op.id)

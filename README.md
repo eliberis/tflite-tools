@@ -7,10 +7,12 @@ The tool is able to produce a short analysis of a Tensorflow Lite (v3) models, w
 * Operator evaluation schedule (as given by the operator order in the model file), along with tensors that need to present at every step of execution and the amount of 
 memory occupied by them.
 
+The analysis can be printed to the standard output or to a set of CSV files using the `--csv` option.
+
 Additionally, the tool can:
 * Modify the model to minimise peak memory usage by reordering operators in the model file (`--optimize` option).
 * Simulate code-book quantization by clustering the weights into `n` centroids, and replacing each weight with the 
-closest centroid value. Node that this is done for each weight matrix separately and biases are left untouched.
+closest centroid value. Note that this is done for each weight matrix separately and biases are left untouched.
 
 The tool also offers an API through the `TFLiteModel` class --- see `def main()` in `tflite_tools.py` for example 
 usage.
@@ -35,12 +37,15 @@ usage: tflite_tools.py [-h] [-i INPUT_PATH] [-o OUTPUT_PATH]
 TFLite model analyser & memory optimizer
 
 optional arguments:
-  -h, --help           show this help message and exit
-  -i INPUT_PATH        input model file (.tflite)
-  -o OUTPUT_PATH       output model file (.tflite)
-  --clusters CLUSTERS  cluster weights into n-many values (simulate code-book
-                       quantization)
-  --optimize           optimize peak working set size
+  -h, --help            show this help message and exit
+  -i INPUT_PATH         input model file (.tflite)
+  -o OUTPUT_PATH        output model file (.tflite)
+  --clusters CLUSTERS   cluster weights into n-many values (simulate code-book
+                        quantization)
+  --optimize            optimize peak working set size
+  --csv CSV_OUTPUT_FOLDER
+                        output model analysis in CSV format into the specified
+                        folder
 
 ```
 
