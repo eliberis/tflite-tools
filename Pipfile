@@ -10,6 +10,7 @@ flatbuffers = "*"
 scikit-learn = "*"
 tqdm = "*"
 prettytable = "*"
+matplotlib = "*"
 
 [dev-packages]
 
