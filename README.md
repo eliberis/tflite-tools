@@ -6,6 +6,8 @@ The tool is able to produce a short analysis of a Tensorflow Lite (v3) models, w
  from the model file.)
 * Operator evaluation schedule (as given by the operator order in the model file), along with tensors that need to present at every step of execution and the amount of 
 memory occupied by them.
+* Plot memory usage during evaluation, detailing sizes of input and output tensors for each operator, as well as other
+ tensors that are present in memory (see example image at the end of 'Example output' section).
 
 The analysis can be printed to the standard output or to a set of CSV files using the `--csv` option.
 
@@ -46,7 +48,8 @@ optional arguments:
   --csv CSV_OUTPUT_FOLDER
                         output model analysis in CSV format into the specified
                         folder
-
+  --plot PLOT_FILE      plot memory usage for each operator during the
+                        execution
 ```
 
 ## Example output
@@ -80,3 +83,9 @@ Operator execution schedule:
 Current peak memory usage: 26,944 B
 
 ```
+
+```
+% python tflite_tools.py -i example_model.tflite --plot example_working_set.png
+```
+
+![Example working set plot](https://github.com/oxmlsys/tflite-tools/raw/master/example_working_set.png)
