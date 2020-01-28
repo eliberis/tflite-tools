@@ -4,7 +4,7 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-tensorflow = "==1.14.0"
+tensorflow = "==1.15.2"
 numpy = "*"
 flatbuffers = "*"
 scikit-learn = "*"
