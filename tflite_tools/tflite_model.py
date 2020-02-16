@@ -41,6 +41,8 @@ def get_buffer_element_size(t):
         TensorType.INT16: 2,
         TensorType.INT32: 4,
         TensorType.INT64: 8,
+        TensorType.FLOAT32: 4,
+        TensorType.FLOAT16: 2,
     }
     return sizes[t]
 
@@ -273,6 +275,16 @@ class TFLiteModel:
 
         return schedule
 
+    def _shorten_long_name(self, name, max_characters=80):
+        assert max_characters >= 4
+        if len(name) > max_characters:
+            name_chars = max_characters - 3  # for ellipsis
+            left = name_chars // 2
+            right = name_chars - left
+            return name[:left] + "..." + name[-right:]
+        else:
+            return name
+
     def _print_execution_schedule(self):
         x = PrettyTable()
         x.field_names = ["Operator (output name)", "Tensors in memory (IDs)", "Memory use (B)"]
@@ -283,7 +295,8 @@ class TFLiteModel:
         for item in schedule:
             op, working_set, mem_use = item
             peak_mem_use = max(peak_mem_use, mem_use)
-            x.add_row([op.output.name, f"[{', '.join(str(t.id) for t in working_set if t.size != 0)}]", f"{mem_use:,}"])
+            name = self._shorten_long_name(op.output.name)
+            x.add_row([name, f"[{', '.join(str(t.id) for t in working_set if t.size != 0)}]", f"{mem_use:,}"])
 
         print("Operator execution schedule:")
         print(x)
@@ -311,7 +324,7 @@ class TFLiteModel:
 
         for t in self.model_graph.tensors:
             if t.size != 0:
-                x.add_row([t.id, t.name, tuple(t.shape), f"{t.size:,}"])
+                x.add_row([t.id, self._shorten_long_name(t.name), tuple(t.shape), f"{t.size:,}"])
 
         print("Tensor information (weights excluded):")
         print(x)
