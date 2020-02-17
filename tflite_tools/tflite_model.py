@@ -247,15 +247,18 @@ class TFLiteModel:
         scale, offset = input_info["quantization"]
         output_index = interpreter.get_output_details()[0]["index"]
 
-        correct = 0
-        test_data.reset_state()
+        total, correct = 0, 0
         for img, label in tqdm(test_data):
-            interpreter.set_tensor(input_index, np.expand_dims(img.astype(np.uint8), axis=0))
+            # TODO: determine the required input type from the model
+            interpreter.set_tensor(input_index, np.expand_dims((img / scale + offset).astype(np.uint8), axis=0))
             interpreter.invoke()
             predictions = interpreter.get_tensor(output_index)
-            if predictions.argmax() == label.argmax():
+            if len(label.shape) > 0:
+                label = label.argmax()
+            if predictions.argmax() == label:
                 correct += 1
-        print(f"{correct} classified correctly out of {len(test_data)} ({correct / len(test_data) * 100:.2f}%)")
+            total += 1
+        print(f"{correct} classified correctly out of {total} ({correct / total * 100:.2f}%)")
 
     def _execution_schedule_info(self):
         if not self.model_graph:
