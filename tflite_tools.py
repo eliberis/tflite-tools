@@ -18,9 +18,6 @@ def main():
                         help="plot memory usage for each operator during the execution")
     args = parser.parse_args()
 
-    # Example API usage:
-    # Can also use `TFLiteModel.create_from_protobuf`, which will invoke TOCO.
-
     model = TFLiteModel.load_from_file(args.input_path)
 
     if args.optimize:
