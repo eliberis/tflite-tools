@@ -4,11 +4,9 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-tensorflow = "==1.14.0"
 numpy = "*"
 flatbuffers = "*"
 scikit-learn = "*"
-tqdm = "*"
 prettytable = "*"
 matplotlib = "*"
 

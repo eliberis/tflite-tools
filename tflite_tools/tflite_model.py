@@ -8,9 +8,7 @@ from .tflite import Model
 from .tflite.BuiltinOperator import BuiltinOperator
 from .tflite.TensorType import TensorType
 from flatbuffers.number_types import UOffsetTFlags
-import tensorflow.lite as tf_lite
 import numpy as np
-from tqdm import tqdm
 from prettytable import PrettyTable
 
 
@@ -85,18 +83,6 @@ class TFLiteModel:
         self.model_bytes = model_bytes
         self.model_graph = None
         self.peak_usage = None
-
-    @classmethod
-    def create_from_protobuf(cls, protobuf_file, inputs, outputs, input_shapes):
-        converter = tf_lite.TFLiteConverter.from_frozen_graph(protobuf_file, input_arrays=inputs,
-                                                              output_arrays=outputs, input_shapes=input_shapes)
-        from tensorflow.lite.python import lite_constants
-        converter.inference_type = lite_constants.QUANTIZED_UINT8
-        converter.inference_input_type = lite_constants.QUANTIZED_UINT8
-        # converter.optimizations = [tf_lite.Optimize.DEFAULT]
-        input_arrays = converter.get_input_arrays()
-        converter.quantized_input_stats = {input_arrays[0]: (0, 1)}  # mean, std_dev
-        return cls(bytearray(converter.convert()))
 
     @classmethod
     def load_from_file(cls, model_path):
@@ -238,27 +224,6 @@ class TFLiteModel:
 
         self.peak_usage = mem(frozenset(g.outputs))
         return self.peak_usage
-
-    def evaluate(self, test_data):
-        interpreter = tf_lite.Interpreter(model_content=bytes(self.model_bytes))
-        interpreter.allocate_tensors()
-        input_info = interpreter.get_input_details()[0]
-        input_index = input_info["index"]
-        scale, offset = input_info["quantization"]
-        output_index = interpreter.get_output_details()[0]["index"]
-
-        total, correct = 0, 0
-        for img, label in tqdm(test_data):
-            # TODO: determine the required input type from the model
-            interpreter.set_tensor(input_index, np.expand_dims((img / scale + offset).astype(np.uint8), axis=0))
-            interpreter.invoke()
-            predictions = interpreter.get_tensor(output_index)
-            if len(label.shape) > 0:
-                label = label.argmax()
-            if predictions.argmax() == label:
-                correct += 1
-            total += 1
-        print(f"{correct} classified correctly out of {total} ({correct / total * 100:.2f}%)")
 
     def _execution_schedule_info(self):
         if not self.model_graph:
