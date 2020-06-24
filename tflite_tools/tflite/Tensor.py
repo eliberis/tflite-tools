@@ -3,6 +3,8 @@
 # namespace: tflite
 
 import flatbuffers
+from flatbuffers.compat import import_numpy
+np = import_numpy()
 
 class Tensor(object):
     __slots__ = ['_tab']
@@ -13,6 +15,10 @@ class Tensor(object):
         x = Tensor()
         x.Init(buf, n + offset)
         return x
+
+    @classmethod
+    def TensorBufferHasIdentifier(cls, buf, offset, size_prefixed=False):
+        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x54\x46\x4C\x33", size_prefixed=size_prefixed)
 
     # Tensor
     def Init(self, buf, pos):
@@ -41,6 +47,11 @@ class Tensor(object):
         return 0
 
     # Tensor
+    def ShapeIsNone(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        return o == 0
+
+    # Tensor
     def Type(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         if o != 0:
@@ -66,7 +77,7 @@ class Tensor(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
         if o != 0:
             x = self._tab.Indirect(o + self._tab.Pos)
-            from .QuantizationParameters import QuantizationParameters
+            from tflite.QuantizationParameters import QuantizationParameters
             obj = QuantizationParameters()
             obj.Init(self._tab.Bytes, x)
             return obj
@@ -79,7 +90,45 @@ class Tensor(object):
             return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
         return False
 
-def TensorStart(builder): builder.StartObject(6)
+    # Tensor
+    def Sparsity(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            from tflite.SparsityParameters import SparsityParameters
+            obj = SparsityParameters()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # Tensor
+    def ShapeSignature(self, j):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+        if o != 0:
+            a = self._tab.Vector(o)
+            return self._tab.Get(flatbuffers.number_types.Int32Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 4))
+        return 0
+
+    # Tensor
+    def ShapeSignatureAsNumpy(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+        if o != 0:
+            return self._tab.GetVectorAsNumpy(flatbuffers.number_types.Int32Flags, o)
+        return 0
+
+    # Tensor
+    def ShapeSignatureLength(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # Tensor
+    def ShapeSignatureIsNone(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+        return o == 0
+
+def TensorStart(builder): builder.StartObject(8)
 def TensorAddShape(builder, shape): builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(shape), 0)
 def TensorStartShapeVector(builder, numElems): return builder.StartVector(4, numElems, 4)
 def TensorAddType(builder, type): builder.PrependInt8Slot(1, type, 0)
@@ -87,4 +136,7 @@ def TensorAddBuffer(builder, buffer): builder.PrependUint32Slot(2, buffer, 0)
 def TensorAddName(builder, name): builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(name), 0)
 def TensorAddQuantization(builder, quantization): builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(quantization), 0)
 def TensorAddIsVariable(builder, isVariable): builder.PrependBoolSlot(5, isVariable, 0)
+def TensorAddSparsity(builder, sparsity): builder.PrependUOffsetTRelativeSlot(6, flatbuffers.number_types.UOffsetTFlags.py_type(sparsity), 0)
+def TensorAddShapeSignature(builder, shapeSignature): builder.PrependUOffsetTRelativeSlot(7, flatbuffers.number_types.UOffsetTFlags.py_type(shapeSignature), 0)
+def TensorStartShapeSignatureVector(builder, numElems): return builder.StartVector(4, numElems, 4)
 def TensorEnd(builder): return builder.EndObject()
