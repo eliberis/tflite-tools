@@ -72,10 +72,11 @@ class TFLiteTensor:
 
 
 class TFLiteOperator:
-    def __init__(self, id=None, output=None, inputs=None):
+    def __init__(self, id=None, output=None, inputs=None, opcode=None):
         self.id = id
         self.output = output
         self.inputs = inputs if inputs is not None else []
+        self.opcode = opcode
 
     def __hash__(self):
         return hash(self.id)
@@ -153,7 +154,9 @@ class TFLiteModel:
             inputs = [tensors[j] for j in op.InputsAsNumpy()]
             assert len(inputs) > 0
 
-            tflite_op = TFLiteOperator(id=i, output=tensors[op.Outputs(0)] if has_output else None, inputs=inputs)
+            opcode = model.OperatorCodes(op.OpcodeIndex()).BuiltinCode()
+            tflite_op = TFLiteOperator(id=i, output=tensors[op.Outputs(0)] if has_output else None,
+                                       inputs=inputs, opcode=opcode)
             tflite_op.output.producer = tflite_op
             for t in inputs:
                 t.consumers.append(tflite_op)
