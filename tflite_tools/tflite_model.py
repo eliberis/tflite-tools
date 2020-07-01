@@ -78,6 +78,10 @@ class TFLiteOperator:
         self.inputs = inputs if inputs is not None else []
         self.opcode = opcode
 
+    @property
+    def non_empty_inputs(self):
+        return [i for i in self.inputs if i is not None]
+
     def __hash__(self):
         return hash(self.id)
 
@@ -151,14 +155,14 @@ class TFLiteModel:
             op = subgraph.Operators(i)
             assert op.OutputsLength() <= 1
             has_output = op.OutputsLength() == 1
-            inputs = [tensors[j] for j in op.InputsAsNumpy()]
+            inputs = [tensors[j] if j != -1 else None for j in op.InputsAsNumpy()]
             assert len(inputs) > 0
 
             opcode = model.OperatorCodes(op.OpcodeIndex()).BuiltinCode()
             tflite_op = TFLiteOperator(id=i, output=tensors[op.Outputs(0)] if has_output else None,
                                        inputs=inputs, opcode=opcode)
             tflite_op.output.producer = tflite_op
-            for t in inputs:
+            for t in tflite_op.non_empty_inputs:
                 t.consumers.append(tflite_op)
             operators.append(tflite_op)
 
@@ -176,7 +180,7 @@ class TFLiteModel:
             if tensor.producer is None:
                 tensor.predecessors = set()
             else:
-                op_inputs = tensor.producer.inputs
+                op_inputs = tensor.producer.non_empty_inputs
                 tensor.predecessors = set(op_inputs)
                 for i in op_inputs:
                     tensor.predecessors |= _compute_predecessors(i)
@@ -220,7 +224,7 @@ class TFLiteModel:
                 # tensors in the working set.
                 if any(t in r.predecessors for r in rest):
                     continue
-                inputs = frozenset(t.producer.inputs)
+                inputs = frozenset(t.producer.non_empty_inputs)
                 new_set = rest | inputs
                 upstream_mem_use, operators = mem(new_set)
 
@@ -325,9 +329,9 @@ class TFLiteModel:
         for item in schedule:
             op, working_set, mem_use = item
 
-            input_size = TFLiteModel._cum_tensor_sizes(op.inputs)
+            input_size = TFLiteModel._cum_tensor_sizes(op.non_empty_inputs)
             output_size = op.output.size
-            other_size = TFLiteModel._cum_tensor_sizes(t for t in working_set if t not in op.inputs and t != op.output)
+            other_size = TFLiteModel._cum_tensor_sizes(t for t in working_set if t not in op.non_empty_inputs and t != op.output)
 
             assert input_size + output_size + other_size == mem_use
             peak_mem_use = max(peak_mem_use, mem_use)
