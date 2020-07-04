@@ -16,6 +16,8 @@ from prettytable import PrettyTable
 from . import tflite
 sys.modules["tflite"] = tflite
 
+OPCODE_NAMES = {v: k for k, v in BuiltinOperator.__dict__.items() if not k.startswith("__")}
+
 
 def cluster_weights(weights, n_clusters):
     from sklearn import cluster
@@ -82,6 +84,10 @@ class TFLiteOperator:
     def non_empty_inputs(self):
         return [i for i in self.inputs if i is not None]
 
+    @property
+    def opcode_name(self):
+        return OPCODE_NAMES[self.opcode]
+
     def __hash__(self):
         return hash(self.id)
 
@@ -94,6 +100,7 @@ class TFLiteModel:
         self.model_bytes = model_bytes
         self.model_graph = None
         self.peak_usage = None
+        self._build_graph()
 
     @classmethod
     def load_from_file(cls, model_path):
@@ -195,12 +202,10 @@ class TFLiteModel:
     def _cum_tensor_sizes(tensors):
         return sum(t.size for t in tensors)
 
-    def peak_mem_usage(self):
+    def compute_best_peak_memory_usage(self):
         if self.peak_usage is not None:
             return self.peak_usage
 
-        if not self.model_graph:
-            self._build_graph()
         g = self.model_graph
 
         # Can turn into an iterative function if this ever causes performance / stack overflow issues
@@ -238,9 +243,10 @@ class TFLiteModel:
         self.peak_usage = mem(frozenset(g.outputs))
         return self.peak_usage
 
+    def peak_memory_usage(self):
+        return max(mem_use for (_, _, mem_use) in self._execution_schedule_info())
+
     def _execution_schedule_info(self):
-        if not self.model_graph:
-            self._build_graph()
         g = self.model_graph
 
         # Compute tensor lifetimes
@@ -295,9 +301,6 @@ class TFLiteModel:
                 w.writerow([op.output.name, ' '.join(str(t.id) for t in working_set if t.size != 0), mem_use])
 
     def _print_tensor_details(self):
-        if not self.model_graph:
-            self._build_graph()
-
         x = PrettyTable()
         x.field_names = ["Id", "Tensor", "Shape", "Size in RAM (B)"]
         x.align["Id"] = "r"
@@ -365,9 +368,6 @@ class TFLiteModel:
         plt.savefig(plot_file, bbox_inches='tight', dpi=300)
 
     def _output_tensor_details_to_csv(self, csv_file):
-        if not self.model_graph:
-            self._build_graph()
-
         with open(csv_file, 'w', newline='') as f:
             w = csv.writer(f)
             w.writerow(["Id", "Name", "Shape", "Size"])
@@ -387,7 +387,7 @@ class TFLiteModel:
         self._output_execution_schedule_to_csv(output_folder / "execution_schedule_info.csv")
 
     def optimize_memory(self):
-        _, op_order = self.peak_mem_usage()
+        _, op_order = self.compute_best_peak_memory_usage()
         num_operators = len(self.model_graph.operators)
         correctly_ordered = all(i == op_order[i].id for i in range(num_operators))
         if correctly_ordered:
