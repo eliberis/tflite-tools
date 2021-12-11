@@ -3,6 +3,7 @@ import csv
 from collections import namedtuple
 import functools
 from pathlib import Path
+from math import prod
 
 from .tflite import Model
 from .tflite.BuiltinOperator import BuiltinOperator
@@ -69,16 +70,24 @@ class TFLiteTensor:
     def size(self):
         return 0 if self.is_constant else np.prod(self.shape) * get_buffer_element_size(self.type)
 
+    @property
+    def const_size(self):
+        return np.prod(self.shape) * get_buffer_element_size(self.type)
+
     def __hash__(self):
         return hash(self.id)
 
+    def __repr__(self):
+        return f"Tensor[id={self.id}, name={self.name}, shape={tuple(self.shape)}]"
+
 
 class TFLiteOperator:
-    def __init__(self, id=None, output=None, inputs=None, opcode=None):
+    def __init__(self, id=None, output=None, inputs=None, opcode=None, options=None):
         self.id = id
         self.output = output
         self.inputs = inputs if inputs is not None else []
         self.opcode = opcode
+        self.options = options
 
     @property
     def non_empty_inputs(self):
@@ -90,6 +99,9 @@ class TFLiteOperator:
 
     def __hash__(self):
         return hash(self.id)
+
+    def __repr__(self):
+        return f"Op[opcode={self.opcode_name}, id={self.id}]"
 
 
 TFLiteGraph = namedtuple("TFLiteGraph", ["tensors", "operators", "inputs", "outputs"])
@@ -167,7 +179,7 @@ class TFLiteModel:
 
             opcode = model.OperatorCodes(op.OpcodeIndex()).BuiltinCode()
             tflite_op = TFLiteOperator(id=i, output=tensors[op.Outputs(0)] if has_output else None,
-                                       inputs=inputs, opcode=opcode)
+                                       inputs=inputs, opcode=opcode, options=op.BuiltinOptions())
             tflite_op.output.producer = tflite_op
             for t in tflite_op.non_empty_inputs:
                 t.consumers.append(tflite_op)
@@ -240,13 +252,66 @@ class TFLiteModel:
                     op_order = operators + [t.producer]
             return min_use, op_order
 
+        mem.cache_clear()
         self.peak_usage = mem(frozenset(g.outputs))
         return self.peak_usage
 
-    def peak_memory_usage(self):
-        return max(mem_use for (_, _, mem_use) in self._execution_schedule_info())
+    def compute_inference_latency(self, mem_access_weight=0, compute_weight=1):
+        return sum(self._macs_for_op(op, mem_access_weight=mem_access_weight, compute_weight=compute_weight)
+                   for op in self.model_graph.operators.values())
 
-    def _execution_schedule_info(self):
+    @staticmethod
+    def _macs_for_op(op: TFLiteOperator, mem_access_weight=0, compute_weight=1):
+        loads, compute = 0, 0
+        if op.opcode == BuiltinOperator.CONV_2D:
+            input, kernel, bias = op.inputs
+            o_c, k_h, k_w, i_c = kernel.shape
+            n, o_h, o_w, _ = op.output.shape
+            work = n * o_h * o_w * o_c * k_h * k_w * i_c
+            loads, compute = 2 * work, work
+            if bias is not None:
+                loads += n * o_h * o_w * o_c
+        if op.opcode == BuiltinOperator.DEPTHWISE_CONV_2D:
+            input, kernel, bias = op.inputs
+            _, k_h, k_w, c = kernel.shape
+            n, o_h, o_w, _ = op.output.shape
+            work = n * c * o_h * o_w * k_h * k_w
+            loads, compute = 2 * work, work
+            if bias is not None:
+                loads += n * c * o_h * o_w
+        if op.opcode in [BuiltinOperator.MEAN]:
+            # TODO: this is global pooling, verify before proceeding
+            n, i_h, i_w, c = op.inputs[0].shape
+            work = n * i_h * i_w * c
+            loads, compute = work, work
+        if op.opcode in [BuiltinOperator.MAX_POOL_2D, BuiltinOperator.AVERAGE_POOL_2D]:
+            from tflite.Pool2DOptions import Pool2DOptions
+            opt = Pool2DOptions()
+            opt._tab = op.options
+            n, o_h, o_w, c = op.output.shape
+            pool_h, pool_w = opt.FilterHeight(), opt.FilterWidth()
+            work = n * o_h * o_w * c * pool_h * pool_w
+            loads, compute = work, work
+        if op.opcode == BuiltinOperator.FULLY_CONNECTED:
+            input, kernel, bias = op.inputs
+            n, out_dim = op.output.shape
+            in_dim = input.shape[-1]
+            work = n * in_dim * out_dim
+            loads, compute = 2 * work, work
+            if bias is not None:
+                loads += n * out_dim
+        if op.opcode == BuiltinOperator.ADD:
+            # TODO: not precise when inputs are of different shapes
+            num_terms = len(op.inputs)
+            elems_per_term = prod(op.output.shape)
+            loads = num_terms * elems_per_term
+            compute = (num_terms - 1) * elems_per_term
+        return mem_access_weight * loads + compute_weight * compute
+
+    def peak_memory_usage(self):
+        return max(mem_use for (_, _, mem_use, _) in self._execution_schedule_info())
+
+    def _execution_schedule_info(self, macs=False, size=False):
         g = self.model_graph
 
         # Compute tensor lifetimes
@@ -258,7 +323,9 @@ class TFLiteModel:
         for op in g.operators:
             tensors = {t for t in g.tensors if first_used_at[t] <= op.id <= last_used_at[t]}
             mem_use = TFLiteModel._cum_tensor_sizes(tensors)
-            schedule.append((op, tensors, mem_use))
+            macs = self._macs_for_op(op) if macs else 0
+            weight_size = sum(i.const_size for i in op.inputs if i.is_constant) if size else 0
+            schedule.append((op, tensors, mem_use, macs, weight_size))
 
         return schedule
 
@@ -272,33 +339,35 @@ class TFLiteModel:
         else:
             return name
 
-    def _print_execution_schedule(self):
+    def _print_execution_schedule(self, macs=False, size=False):
         x = PrettyTable()
-        x.field_names = ["Operator (output name)", "Tensors in memory (IDs)", "Memory use (B)"]
+        x.field_names = ["Operator (output name)", "Tensors in memory (IDs)", "Memory use (B)", "MACs", "Size"]
         x.align["Memory use (B)"] = "r"
 
-        schedule = self._execution_schedule_info()
-        peak_mem_use = 0
-        for item in schedule:
-            op, working_set, mem_use = item
+        schedule = self._execution_schedule_info(macs=macs, size=size)
+        peak_mem_use, total_macs, total_weight_size = 0, 0, 0
+        for op, working_set, mem_use, macs, weight_size in schedule:
             peak_mem_use = max(peak_mem_use, mem_use)
+            total_macs += macs
+            total_weight_size += weight_size
             name = self._shorten_long_name(op.output.name)
-            x.add_row([name, f"[{', '.join(str(t.id) for t in working_set if t.size != 0)}]", f"{mem_use:,}"])
+            x.add_row([name, f"[{', '.join(str(t.id) for t in working_set if t.size != 0)}]", f"{mem_use:,}", f"{macs:,}", f"{weight_size:,}"])
 
         print("Operator execution schedule:")
         print(x)
         print(f"Current peak memory usage: {peak_mem_use:,} B")
+        print(f"Total MACs: {total_macs:,}")
+        print(f"Total weight size: {total_weight_size:,}")
         print()
 
-    def _output_execution_schedule_to_csv(self, csv_file):
+    def _output_execution_schedule_to_csv(self, csv_file, macs=False, size=False):
         with open(csv_file, 'w', newline='') as f:
             w = csv.writer(f)
-            w.writerow(["Operator", "Working set", "Memory use"])
+            w.writerow(["Operator", "Working set", "Memory use", "MACs", "Size"])
 
-            schedule = self._execution_schedule_info()
-            for item in schedule:
-                op, working_set, mem_use = item
-                w.writerow([op.output.name, ' '.join(str(t.id) for t in working_set if t.size != 0), mem_use])
+            schedule = self._execution_schedule_info(macs=macs, size=size)
+            for op, working_set, mem_use, macs, weight_size in schedule:
+                w.writerow([op.output.name, ' '.join(str(t.id) for t in working_set if t.size != 0), mem_use, macs, weight_size])
 
     def _print_tensor_details(self):
         x = PrettyTable()
@@ -329,9 +398,7 @@ class TFLiteModel:
         schedule = self._execution_schedule_info()
         peak_mem_use = 0
 
-        for item in schedule:
-            op, working_set, mem_use = item
-
+        for op, working_set, mem_use, _, _ in schedule:
             input_size = TFLiteModel._cum_tensor_sizes(op.non_empty_inputs)
             output_size = op.output.size
             other_size = TFLiteModel._cum_tensor_sizes(t for t in working_set if t not in op.non_empty_inputs and t != op.output)
@@ -376,15 +443,15 @@ class TFLiteModel:
                 if t.size != 0:
                     w.writerow([t.id, t.name, ' '.join(str(i) for i in t.shape), t.size])
 
-    def print_model_analysis(self):
+    def print_model_analysis(self, macs=False, size=False):
         self._print_tensor_details()
-        self._print_execution_schedule()
+        self._print_execution_schedule(macs=macs, size=size)
 
-    def output_model_analysis_to_csv(self, output_folder):
+    def output_model_analysis_to_csv(self, output_folder, macs=False, size=False):
         output_folder = Path(output_folder)
         assert output_folder.is_dir()
         self._output_tensor_details_to_csv(output_folder / "tensor_details.csv")
-        self._output_execution_schedule_to_csv(output_folder / "execution_schedule_info.csv")
+        self._output_execution_schedule_to_csv(output_folder / "execution_schedule_info.csv", macs=macs, size=size)
 
     def optimize_memory(self):
         _, op_order = self.compute_best_peak_memory_usage()

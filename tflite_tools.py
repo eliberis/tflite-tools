@@ -16,6 +16,8 @@ def main():
                         help="output model analysis in CSV format into the specified folder")
     parser.add_argument("--plot", type=str, dest="plot_file", default=None,
                         help="plot memory usage for each operator during the execution")
+    parser.add_argument("--calc-macs", default=False, action="store_true", help="Calculate approximate MAC usage")
+    parser.add_argument("--calc-size", default=False, action="store_true", help="Calculate parameter size")
     args = parser.parse_args()
 
     model = TFLiteModel.load_from_file(args.input_path)
@@ -27,9 +29,9 @@ def main():
     if args.csv_output_folder:
         print(f"Writing model analysis to {args.csv_output_folder} in CSV format")
         os.makedirs(args.csv_output_folder, exist_ok=True)
-        model.output_model_analysis_to_csv(args.csv_output_folder)
+        model.output_model_analysis_to_csv(args.csv_output_folder, macs=args.calc_macs, size=args.calc_size)
     else:
-        model.print_model_analysis()
+        model.print_model_analysis(macs=args.calc_macs, size=args.calc_size)
 
     if args.clusters > 0:
         model.cluster_weights(args.clusters)
