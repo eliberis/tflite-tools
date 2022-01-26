@@ -342,6 +342,8 @@ class TFLiteModel:
         x = PrettyTable()
         x.field_names = ["Operator (output name)", "Tensors in memory (IDs)", "Memory use (B)", "MACs", "Size"]
         x.align["Memory use (B)"] = "r"
+        x.align["MACs"] = "r"
+        x.align["Size"] = "r"
 
         schedule = self._execution_schedule_info(macs=macs, size=size)
         peak_mem_use, total_macs, total_weight_size = 0, 0, 0
