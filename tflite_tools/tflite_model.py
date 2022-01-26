@@ -3,7 +3,6 @@ import csv
 from collections import namedtuple
 import functools
 from pathlib import Path
-from math import prod
 
 from .tflite import Model
 from .tflite.BuiltinOperator import BuiltinOperator
