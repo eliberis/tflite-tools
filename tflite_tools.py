@@ -29,9 +29,9 @@ def main():
     if args.csv_output_folder:
         print(f"Writing model analysis to {args.csv_output_folder} in CSV format")
         os.makedirs(args.csv_output_folder, exist_ok=True)
-        model.output_model_analysis_to_csv(args.csv_output_folder, macs=args.calc_macs, size=args.calc_size)
+        model.output_model_analysis_to_csv(args.csv_output_folder, calc_macs=args.calc_macs, calc_size=args.calc_size)
     else:
-        model.print_model_analysis(macs=args.calc_macs, size=args.calc_size)
+        model.print_model_analysis(calc_macs=args.calc_macs, calc_size=args.calc_size)
 
     if args.clusters > 0:
         model.cluster_weights(args.clusters)
@@ -39,11 +39,6 @@ def main():
     if args.plot_file:
         print(f"Plotting operator memory usage to {args.plot_file}")
         model.plot_memory_usage(args.plot_file)
-
-    # Example API usage:
-    # `model.evaluate(<data_iterator>)`
-    # where data iterator returns `img`, `label`.
-    # `img` will be cast to uint8 and `label` is assumed to be a one-hot vector
 
     if args.output_path:
         print(f"Saving the model to {args.output_path}...")

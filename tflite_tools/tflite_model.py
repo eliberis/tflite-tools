@@ -302,7 +302,7 @@ class TFLiteModel:
         if op.opcode == BuiltinOperator.ADD:
             # TODO: not precise when inputs are of different shapes
             num_terms = len(op.inputs)
-            elems_per_term = prod(op.output.shape)
+            elems_per_term = np.prod(op.output.shape)
             loads = num_terms * elems_per_term
             compute = (num_terms - 1) * elems_per_term
         return mem_access_weight * loads + compute_weight * compute
@@ -310,7 +310,7 @@ class TFLiteModel:
     def peak_memory_usage(self):
         return max(mem_use for (_, _, mem_use, _) in self._execution_schedule_info())
 
-    def _execution_schedule_info(self, macs=False, size=False):
+    def _execution_schedule_info(self, calc_macs=False, calc_size=False):
         g = self.model_graph
 
         # Compute tensor lifetimes
@@ -322,8 +322,8 @@ class TFLiteModel:
         for op in g.operators:
             tensors = {t for t in g.tensors if first_used_at[t] <= op.id <= last_used_at[t]}
             mem_use = TFLiteModel._cum_tensor_sizes(tensors)
-            macs = self._macs_for_op(op) if macs else 0
-            weight_size = sum(i.const_size for i in op.inputs if i.is_constant) if size else 0
+            macs = self._macs_for_op(op) if calc_macs else 0
+            weight_size = sum(i.const_size for i in op.inputs if i.is_constant) if calc_size else 0
             schedule.append((op, tensors, mem_use, macs, weight_size))
 
         return schedule
@@ -338,37 +338,45 @@ class TFLiteModel:
         else:
             return name
 
-    def _print_execution_schedule(self, macs=False, size=False):
+    def _print_execution_schedule(self, calc_macs=False, calc_size=False):
         x = PrettyTable()
-        x.field_names = ["Operator (output name)", "Tensors in memory (IDs)", "Memory use (B)", "MACs", "Size"]
+        x.field_names = ["Operator (output name)", "Tensors in memory (IDs)", "Memory use (B)"] \
+                        + (["MACs"] if calc_macs else []) + (["Size"] if calc_size else [])
         x.align["Memory use (B)"] = "r"
-        x.align["MACs"] = "r"
-        x.align["Size"] = "r"
+        if calc_macs:
+            x.align["MACs"] = "r"
+        if calc_size:
+            x.align["Size"] = "r"
 
-        schedule = self._execution_schedule_info(macs=macs, size=size)
+        schedule = self._execution_schedule_info(calc_macs=calc_macs, calc_size=calc_size)
         peak_mem_use, total_macs, total_weight_size = 0, 0, 0
-        for op, working_set, mem_use, macs, weight_size in schedule:
+        for op, working_set, mem_use, macs, size in schedule:
             peak_mem_use = max(peak_mem_use, mem_use)
             total_macs += macs
-            total_weight_size += weight_size
+            total_weight_size += size
             name = self._shorten_long_name(op.output.name)
-            x.add_row([name, f"[{', '.join(str(t.id) for t in working_set if t.size != 0)}]", f"{mem_use:,}", f"{macs:,}", f"{weight_size:,}"])
+            x.add_row([name, f"[{', '.join(str(t.id) for t in working_set if t.size != 0)}]", f"{mem_use:,}"]
+                      + ([f"{macs:,}"] if calc_macs else []) + ([f"{size:,}"] if calc_size else []))
 
         print("Operator execution schedule:")
         print(x)
         print(f"Current peak memory usage: {peak_mem_use:,} B")
-        print(f"Total MACs: {total_macs:,}")
-        print(f"Total weight size: {total_weight_size:,}")
+        if calc_macs:
+            print(f"Total MACs: {total_macs:,}")
+        if calc_size:
+            print(f"Total weight size: {total_weight_size:,}")
         print()
 
-    def _output_execution_schedule_to_csv(self, csv_file, macs=False, size=False):
+    def _output_execution_schedule_to_csv(self, csv_file, calc_macs=False, calc_size=False):
         with open(csv_file, 'w', newline='') as f:
             w = csv.writer(f)
-            w.writerow(["Operator", "Working set", "Memory use", "MACs", "Size"])
+            w.writerow(["Operator", "Working set", "Memory use"]
+                       + (["MACs"] if calc_macs else []) + (["Size"] if calc_size else []))
 
-            schedule = self._execution_schedule_info(macs=macs, size=size)
-            for op, working_set, mem_use, macs, weight_size in schedule:
-                w.writerow([op.output.name, ' '.join(str(t.id) for t in working_set if t.size != 0), mem_use, macs, weight_size])
+            schedule = self._execution_schedule_info(calc_macs=calc_macs, calc_size=calc_size)
+            for op, working_set, mem_use, macs, size in schedule:
+                w.writerow([op.output.name, ' '.join(str(t.id) for t in working_set if t.size != 0), mem_use]
+                           + ([macs] if calc_macs else []) + ([size] if calc_size else []))
 
     def _print_tensor_details(self):
         x = PrettyTable()
@@ -444,15 +452,15 @@ class TFLiteModel:
                 if t.size != 0:
                     w.writerow([t.id, t.name, ' '.join(str(i) for i in t.shape), t.size])
 
-    def print_model_analysis(self, macs=False, size=False):
+    def print_model_analysis(self, calc_macs=False, calc_size=False):
         self._print_tensor_details()
-        self._print_execution_schedule(macs=macs, size=size)
+        self._print_execution_schedule(calc_macs=calc_macs, calc_size=calc_size)
 
-    def output_model_analysis_to_csv(self, output_folder, macs=False, size=False):
+    def output_model_analysis_to_csv(self, output_folder, calc_macs=False, calc_size=False):
         output_folder = Path(output_folder)
         assert output_folder.is_dir()
         self._output_tensor_details_to_csv(output_folder / "tensor_details.csv")
-        self._output_execution_schedule_to_csv(output_folder / "execution_schedule_info.csv", macs=macs, size=size)
+        self._output_execution_schedule_to_csv(output_folder / "execution_schedule_info.csv", calc_macs=calc_macs, calc_size=calc_size)
 
     def optimize_memory(self):
         _, op_order = self.compute_best_peak_memory_usage()
